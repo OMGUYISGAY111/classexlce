@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { inject, ref, computed, type Ref } from 'vue';
+import { inject, ref, computed, onMounted, type Ref } from 'vue';
 import type { ScheduleEntry, CourseData, PracticeData } from '../../api/type';
+import { initSession, getCaptchaUrl, login } from '../../api/eduApi';
+import { useRouter } from 'vue-router';
 
+const router = useRouter();
 const excleRef = inject<Ref<ScheduleEntry[]>>('classexcle', ref([]));
 
 const weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
@@ -9,6 +12,8 @@ const periods = ['1-2节', '3-4节', '5节', '6-7节', '8-9节', '10-11节', '12
 
 const currentWeek = ref(1);
 const WeekToChange = ref(1);
+const refreshing = ref(false);
+const refreshMsg = ref('');
 
 function changeWeek(e?: Event) {
   e?.preventDefault();
@@ -19,6 +24,68 @@ function changeWeek(e?: Event) {
     alert("请输入1-20之间的整数")
   }
 }
+
+async function tryAutoRefresh() {
+  let credRaw: string | null = null;
+  try { credRaw = localStorage.getItem('bjfu_credentials'); } catch {}
+  if (!credRaw) return;
+  let cred: { username?: string; password?: string } = {};
+  try { cred = JSON.parse(credRaw); } catch { return; }
+  if (!cred.username || !cred.password) return;
+
+  refreshing.value = true;
+  refreshMsg.value = '正在自动刷新课表...';
+
+  try {
+    refreshMsg.value = '初始化会话...';
+    const sid = await initSession();
+
+    refreshMsg.value = '获取验证码...';
+    const captchaUrl = getCaptchaUrl(sid);
+    const imgResp = await fetch(captchaUrl);
+    const blob = await imgResp.blob();
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    refreshMsg.value = '识别验证码...';
+    const ocrResp = await fetch('http://localhost:3000/api/recognize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64 }),
+    });
+    const ocrData = await ocrResp.json();
+    const captcha = ocrData.text || '';
+    if (!captcha) {
+      refreshMsg.value = '验证码识别失败，请手动登录刷新';
+      return;
+    }
+
+    refreshMsg.value = '登录中...';
+    const loginResp = await login(sid, cred.username, cred.password, captcha);
+    if (!loginResp.success || !loginResp.schedule) {
+      refreshMsg.value = '自动登录失败，请手动登录刷新';
+      return;
+    }
+
+    excleRef.value = loginResp.schedule;
+    localStorage.setItem('bjfu_schedule', JSON.stringify(loginResp.schedule));
+    refreshMsg.value = '课表已更新';
+    setTimeout(() => { refreshMsg.value = ''; }, 2000);
+  } catch (err: any) {
+    console.error('Auto refresh failed:', err);
+    refreshMsg.value = '自动刷新失败，请手动登录';
+  } finally {
+    refreshing.value = false;
+  }
+}
+
+onMounted(() => {
+  tryAutoRefresh();
+});
 
 const totalWeeks = computed(() => {
   let max = 0;
@@ -59,13 +126,15 @@ const grid = computed(() => {
 
 <template>
   <div class="schedule-container">
-    <h2>课程表</h2>
-
-    <!-- 周次选择器 -->
-    <div class="week-selector">
-      <button @click="currentWeek = Math.max(1, currentWeek - 1)">◀</button>
-      <span>第 {{ currentWeek }} 周</span>
-      <button @click="currentWeek = Math.min(totalWeeks, currentWeek + 1)">▶</button>
+    <div class="header-row">
+      <h2>课程表</h2>
+      <div class="header-actions">
+        <span v-if="refreshMsg" class="refresh-msg" :class="{ error: refreshMsg.includes('失败') }">{{ refreshMsg }}</span>
+        <button class="refresh-btn" :disabled="refreshing" @click="tryAutoRefresh">
+          {{ refreshing ? '刷新中...' : '🔄 刷新课表' }}
+        </button>
+        <button class="login-btn" @click="router.push('/')">登录页</button>
+      </div>
     </div>
 
     <!-- 实践/实验安排 -->
@@ -112,37 +181,153 @@ const grid = computed(() => {
       暂无课表数据，请先登录获取。
     </div>
 
-    <form @submit.prevent="changeWeek">
-      <input v-model.number="WeekToChange" placeholder="输入周数..." type="number">
-      <button type="submit">确认</button>
-    </form>
+    <div class="fixed-spacer"></div>
+
+    <div class="week-input-form">
+      <div class="week-nav">
+        <button @click="currentWeek = Math.max(1, currentWeek - 1)">◀</button>
+        <span class="week-label">第 {{ currentWeek }} 周</span>
+        <button @click="currentWeek = Math.min(totalWeeks, currentWeek + 1)">▶</button>
+      </div>
+      <form @submit.prevent="changeWeek">
+        <input v-model.number="WeekToChange" placeholder="跳转..." type="number">
+        <button type="submit">GO</button>
+      </form>
+    </div>
+
+
   </div>
 </template>
 
 <style scoped>
 .schedule-container {
-  padding: 16px;
+  padding: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.refresh-msg {
+  font-size: 12px;
+  color: #2e7d32;
+}
+.refresh-msg.error {
+  color: #c62828;
+}
+
+.refresh-btn, .login-btn {
+  padding: 4px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.refresh-btn:hover, .login-btn:hover {
+  background: #e3f2fd;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 h2 {
-  margin-bottom: 12px;
+  margin: 0;
+  font-size: 18px;
   color: #333;
+  white-space: nowrap;
 }
 
 .week-selector {
+  display: none;
+}
+
+.week-input-form {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 8px;
+  background: #fff;
+  border-top: 1px solid #eee;
+  z-index: 100;
+}
+
+.week-input-form form {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 4px;
+}
+
+.week-input-form form input {
+  width: 48px;
+  padding: 4px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.week-input-form form button {
+  background: #1976d2;
+  color: #fff;
+  border-color: #1976d2;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.week-nav button {
+  padding: 5px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  min-width: 32px;
+}
+
+.week-label {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 70px;
+  text-align: center;
 }
 
 .week-selector button {
-  padding: 4px 12px;
+  padding: 6px 14px;
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
   cursor: pointer;
   font-size: 14px;
+  min-width: 36px;
 }
 
 .week-selector button:hover {
@@ -150,44 +335,45 @@ h2 {
 }
 
 .week-selector span {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  min-width: 80px;
+  min-width: 70px;
   text-align: center;
 }
 
 .practice-section {
-  margin-bottom: 20px;
-  padding: 12px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
   background: #fff3e0;
   border-radius: 6px;
 }
 
 .practice-section h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
+  margin: 0 0 6px;
+  font-size: 13px;
   color: #e65100;
 }
 
 .practice-item {
-  font-size: 13px;
+  font-size: 12px;
   color: #555;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .table-wrapper {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
+  table-layout: fixed;
   border-collapse: collapse;
   width: 100%;
-  min-width: 900px;
 }
 
 th, td {
   border: 1px solid #ddd;
-  padding: 8px;
+  padding: 4px 2px;
   text-align: center;
   vertical-align: top;
 }
@@ -195,34 +381,35 @@ th, td {
 th {
   background: #f5f5f5;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
   color: #444;
 }
 
 .period-col {
-  width: 10cqw;
+  width: 5vw;
 }
 
 .period-label {
   background: #f5f5f5;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 10px;
   color: #666;
-  width: 60px;
+  width: 5vw;
 }
 
-.cell {
-  min-width: 120px;
-  min-height: 60px;
-}
+  .cell {
+    height: 10vh;
+  }
 
 .course-block {
   background: #e3f2fd;
-  border-radius: 4px;
-  padding: 4px 6px;
-  margin-bottom: 4px;
-  font-size: 12px;
-  line-height: 1.5;
+  border-radius: 3px;
+  padding: 2px 3px;
+  margin-bottom: 2px;
+  font-size: 10px;
+  line-height: 1.3;
+  overflow: hidden;
+  height: 100%;
 }
 
 .course-block:last-child {
@@ -232,10 +419,20 @@ th {
 .course-name {
   font-weight: 600;
   color: #1565c0;
+  word-break: break-all;
 }
 
 .course-info {
   color: #555;
+  word-break: break-all;
+}
+
+.course-info {
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-all;
 }
 
 .empty-tip {
@@ -243,5 +440,107 @@ th {
   color: #999;
   margin-top: 40px;
   font-size: 14px;
+}
+
+.fixed-spacer {
+  height: 80px;
+}
+
+.week-input-form {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
+  background: #fff;
+  border-top: 1px solid #eee;
+  z-index: 100;
+}
+
+.week-input-form input {
+  width: 100px;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  text-align: center;
+}
+
+.week-input-form button {
+  padding: 6px 14px;
+  border: 1px solid #1976d2;
+  border-radius: 4px;
+  background: #1976d2;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .table-wrapper {
+    max-width: 100vw;
+  }
+
+  .schedule-container {
+    padding: 8px;
+  }
+
+  .header-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .header-actions {
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  h2 {
+    font-size: 16px;
+  }
+
+  th, td {
+    padding: 2px 1px;
+    width: 5%;
+  }
+
+  th {
+    font-size: 9px;
+  }
+
+  .period-col {
+    width: 2%;
+  }
+
+  .period-label {
+    font-size: 9px;
+    width: 26px;
+    height: 12vh;
+  }
+
+  .cell {
+    width: 10%;
+  }
+
+  .course-block {
+    padding: 1px 2px;
+    font-size: 8px;
+    line-height: 1.2;
+  }
+
+  .refresh-msg {
+    font-size: 11px;
+  }
+
+  .refresh-btn, .login-btn {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
 }
 </style>

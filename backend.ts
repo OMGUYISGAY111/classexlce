@@ -6,7 +6,6 @@ import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import qs from 'qs';
 import * as cheerio from 'cheerio';
-import { createWorker, PSM, Worker } from 'tesseract.js';
 
 const app = express();
 app.use(cors());
@@ -27,21 +26,6 @@ setInterval(() => {
     if (now - createdAt > 30 * 60 * 1000) sessionStore.delete(sid);
   }
 }, 30 * 60 * 1000);
-
-// ---------- OCR 引擎 ----------
-let ocrWorker: Worker | null = null;
-
-async function getOcrWorker(): Promise<Worker> {
-  if (!ocrWorker) {
-    ocrWorker = await createWorker('eng');
-    await ocrWorker.setParameters({
-      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
-      tessedit_pageseg_mode: PSM.SINGLE_LINE,
-    });
-    console.log('OCR worker initialized');
-  }
-  return ocrWorker;
-}
 
 // ---------- 辅助函数 ----------
 function createClient(): AxiosInstance {
@@ -310,7 +294,10 @@ app.post('/api/login', async (req: Request, res: Response) => {
   }
 });
 
-// 4. OCR 识别验证码
+// 4. OCR 识别验证码 (OCR.space API)
+const OCR_API_KEY = 'K85645607388957';
+const OCR_API_URL = 'https://api.ocr.space/parse/image';
+
 app.post('/api/recognize', async (req: Request, res: Response) => {
   try {
     const { image } = req.body;
@@ -318,11 +305,28 @@ app.post('/api/recognize', async (req: Request, res: Response) => {
       res.status(400).json({ error: '缺少图片数据' });
       return;
     }
-    const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ''), 'base64');
-    const worker = await getOcrWorker();
-    const { data: { text } } = await worker.recognize(buffer);
-    const cleaned = text.replace(/[^a-zA-Z0-9]/g, '');
-    res.json({ text: cleaned });
+    const base64 = image.replace(/^data:image\/\w+;base64,/, '');
+    const formData = new URLSearchParams();
+    formData.append('base64Image', `data:image/png;base64,${base64}`);
+    formData.append('language', 'eng');
+    formData.append('OCREngine', '2');
+    formData.append('isTable', 'false');
+
+    const ocrRes = await axios.post(OCR_API_URL, formData.toString(), {
+      headers: {
+        'apikey': OCR_API_KEY,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      timeout: 15000,
+    });
+
+    if (ocrRes.data?.ParsedResults?.length > 0) {
+      const text = ocrRes.data.ParsedResults[0].ParsedText || '';
+      const cleaned = text.replace(/[^a-zA-Z0-9]/g, '');
+      res.json({ text: cleaned });
+    } else {
+      res.json({ text: '' });
+    }
   } catch (err) {
     console.error('OCR error:', err);
     res.status(500).json({ error: 'OCR识别失败' });

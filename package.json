@@ -20,7 +20,6 @@
     "qs": "^6.15.2",
     "router": "^2.2.0",
     "router-link": "^0.0.4",
-    "tesseract.js": "^5.1.1",
     "tough-cookie": "^6.0.1",
     "uuid": "^14.0.0",
     "vue-router": "^5.1.0"
