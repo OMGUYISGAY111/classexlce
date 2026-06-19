@@ -43,7 +43,7 @@
 <script setup lang="ts">
 import { ref, onMounted, type Ref, inject } from 'vue';
 import { initSession, getCaptchaUrl, login } from '../api/eduApi';
-import type { CourseRow, ScheduleEntry } from '../api/type';
+import type { ScheduleEntry } from '../api/type';
 import { useRouter } from 'vue-router';
 
 const username = ref('');
@@ -86,7 +86,7 @@ let showPassword:Ref<boolean> = ref(true);
 const router = useRouter();
 
 async function recognizeCaptcha() {
-  if (!captchaBlob.value) {
+  if (!captchaBlob.value && !captchaImgRef.value) {
     alert('请先加载验证码');
     return;
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, ref, computed, onMounted, type Ref, onUnmounted } from 'vue';
+import { inject, ref, computed, onMounted, type Ref } from 'vue';
 import type { ScheduleEntry, CourseData, PracticeData } from '../../api/type';
 import { initSession, getCaptchaUrl, login } from '../../api/eduApi';
 import { useRouter } from 'vue-router';
@@ -97,7 +97,7 @@ const ScrollToBottom = () => {
 const totalWeeks = computed(() => {
   let max = 0;
   for (const e of excleRef.value) {
-    if (!('type' in e && e.type === 'practice')) {
+    if (!('type' in e)) {
       for (const w of e.weeks) {
         if (w > max) max = w;
       }

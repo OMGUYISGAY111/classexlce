@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { provide, ref, onMounted, type Ref } from 'vue';
-import Canyouhearme from './components/canyouhearme.vue';
-import HelloWorld from './components/HelloWorld.vue'
+import { provide, ref } from 'vue';
 import type { ScheduleEntry } from './api/type.ts';
 
 const STORAGE_KEY = 'bjfu_schedule';
