@@ -522,13 +522,13 @@ th {
   }
 
   .period-col {
-    width: 2%;
+    width: 5%;
   }
 
   .period-label {
     font-size: 9px;
     width: 26px;
-    height: 12vh;
+    height: 11vh;
   }
 
   .cell {
