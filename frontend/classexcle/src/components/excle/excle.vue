@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, ref, computed, onMounted, type Ref } from 'vue';
+import { inject, ref, computed, onMounted, type Ref, onUnmounted } from 'vue';
 import type { ScheduleEntry, CourseData, PracticeData } from '../../api/type';
 import { initSession, getCaptchaUrl, login } from '../../api/eduApi';
 import { useRouter } from 'vue-router';
@@ -86,6 +86,13 @@ async function tryAutoRefresh() {
 onMounted(() => {
   tryAutoRefresh();
 });
+
+const ScrollToBottom = () => {
+  window.scrollTo({
+    behavior: 'smooth',
+    top: window.innerHeight
+  })
+}
 
 const totalWeeks = computed(() => {
   let max = 0;
@@ -185,9 +192,9 @@ const grid = computed(() => {
 
     <div class="week-input-form">
       <div class="week-nav">
-        <button @click="currentWeek = Math.max(1, currentWeek - 1)">◀</button>
+        <button @click="currentWeek = Math.max(1, currentWeek - 1); ScrollToBottom();">◀</button>
         <span class="week-label">第 {{ currentWeek }} 周</span>
-        <button @click="currentWeek = Math.min(totalWeeks, currentWeek + 1)">▶</button>
+        <button @click="currentWeek = Math.min(totalWeeks, currentWeek + 1); ScrollToBottom();">▶</button>
       </div>
       <form @submit.prevent="changeWeek">
         <input v-model.number="WeekToChange" placeholder="跳转..." type="number">
